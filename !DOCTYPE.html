@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Correlacionador de Leyes Mexicanas</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header>
+    <h1>📘 Correlacionador de Leyes Mexicanas</h1>
+    <input type="text" id="searchInput" placeholder="Buscar ley..." />
+  </header>
+
+  <main>
+    <aside>
+      <h3>Filtros</h3>
+      <label><input type="checkbox" value="federal" class="filter" checked /> Federal</label>
+      <label><input type="checkbox" value="estatal" class="filter" checked /> Estatal</label>
+      <label>
+        <select id="temaFilter">
+          <option value="">Todos los temas</option>
+          <option value="laboral">Laboral</option>
+          <option value="ambiental">Ambiental</option>
+          <option value="educacion">Educación</option>
+        </select>
+      </label>
+    </aside>
+
+    <section id="leyes-container">
+      <!-- Las leyes se cargarán aquí dinámicamente -->
+    </section>
+  </main>
+
+  <script src="script.js"></script>
+</body>
+</html>
