@@ -3,846 +3,221 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Buscador de Leyes Mexicanas</title>
+    <title>Legislación Mexicana</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
         body {
             font-family: 'Inter', sans-serif;
             background-color: #f3f4f6;
-            color: #1f2937;
         }
         .container {
-            max-width: 900px;
-            margin: 0 auto;
+            max-width: 1200px;
         }
-        .law-item {
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s;
+        .law-link {
+            transition: all 0.2s ease-in-out;
         }
-        .law-item:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        .law-link:hover {
+            transform: scale(1.02);
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
         }
-        .related-article-link {
-            cursor: pointer;
-            color: #2563eb;
-            font-weight: 500;
-            text-decoration: underline;
-            transition: color 0.2s;
-        }
-        .related-article-link:hover {
-            color: #1e40af;
-        }
-        .loading-spinner {
-            border: 4px solid rgba(0, 0, 0, 0.1);
-            width: 24px;
-            height: 24px;
-            border-radius: 50%;
-            border-left-color: #2563eb;
-            animation: spin 1s ease infinite;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+        .law-content-container {
+            max-height: calc(100vh - 200px);
+            overflow-y: auto;
         }
     </style>
-    <script type="module">
-        // Importa las funciones necesarias de Firebase
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, collection, addDoc, getDocs, doc, onSnapshot, query, where, getDoc, updateDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Variables globales proporcionadas por el entorno
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-        
-        // Referencias a los elementos del DOM
-        const searchInput = document.getElementById('search-input');
-        const lawList = document.getElementById('law-list');
-        const lawDetailsContainer = document.getElementById('law-details-container');
-        const backButton = document.getElementById('back-button');
-        const userIdDisplay = document.getElementById('user-id-display');
-        const addLawButton = document.getElementById('add-law-button');
-        const modal = document.getElementById('modal');
-        const closeFormButton = document.getElementById('close-form');
-        const addLawForm = document.getElementById('add-law-form');
-        const formTitle = document.getElementById('form-title');
-        const formArticleNumber = document.getElementById('form-article-number');
-        const formDescription = document.getElementById('form-description');
-        const formRegTitle = document.getElementById('form-reg-title');
-        const formRegContent = document.getElementById('form-reg-content');
-        const formRelLaw = document.getElementById('form-rel-law');
-        const formRelArticle = document.getElementById('form-rel-article');
-        const generateRelatedLawsButton = document.getElementById('generate-related-laws-button');
-        const fetchLawFromGeminiButton = document.getElementById('fetch-law-from-gemini-button');
-        const suggestedRelatedLaws = document.getElementById('suggested-related-laws');
-        const formSubmit = document.getElementById('form-submit');
-        const modalTitle = document.getElementById('modal-title');
-        const confirmationModal = document.getElementById('confirmation-modal');
-        const confirmDeleteButton = document.getElementById('confirm-delete');
-        const cancelDeleteButton = document.getElementById('cancel-delete');
-
-        const geminiApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=`;
-        const geminiTtsApiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-tts:generateContent?key=`;
-        
-        let db, auth, userId, allLaws = [];
-        let editingLawId = null; // Variable para rastrear la ley que se está editando
-
-        // Convierte el audio PCM a WAV para poder reproducirlo en el navegador
-        function pcmToWav(pcmData, sampleRate) {
-            const numChannels = 1;
-            const bytesPerSample = 2;
-            const blockAlign = numChannels * bytesPerSample;
-            const byteRate = sampleRate * blockAlign;
-        
-            const pcmBuffer = pcmData.buffer;
-            const wavBuffer = new ArrayBuffer(44 + pcmBuffer.byteLength);
-            const view = new DataView(wavBuffer);
-        
-            // WAV header
-            view.setUint32(0, 0x46464952, true); // "RIFF"
-            view.setUint32(4, 36 + pcmBuffer.byteLength, true); // file size
-            view.setUint32(8, 0x45564157, true); // "WAVE"
-            view.setUint32(12, 0x20746d66, true); // "fmt "
-            view.setUint32(16, 16, true); // format chunk size
-            view.setUint16(20, 1, true); // audio format (1 = PCM)
-            view.setUint16(22, numChannels, true); // number of channels
-            view.setUint32(24, sampleRate, true); // sample rate
-            view.setUint32(28, byteRate, true); // byte rate
-            view.setUint16(32, blockAlign, true); // block align
-            view.setUint16(34, 16, true); // bits per sample
-            view.setUint32(36, 0x61746164, true); // "data"
-            view.setUint32(40, pcmBuffer.byteLength, true); // data size
-        
-            const dataBytes = new Uint8Array(pcmBuffer);
-            for (let i = 0; i < dataBytes.length; i++) {
-                view.setUint8(44 + i, dataBytes[i]);
-            }
-        
-            return new Blob([view], { type: "audio/wav" });
-        }
-        
-        // Función para inicializar Firebase y autenticar al usuario
-        async function initializeFirebase() {
-            try {
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-
-                onAuthStateChanged(auth, async (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        userIdDisplay.textContent = `ID de Usuario: ${userId}`;
-                        console.log("Autenticación exitosa. ID de usuario:", userId);
-                        setupDatabaseAndListeners();
-                    } else {
-                        console.log("Error al autenticar o usuario no disponible.");
-                        userIdDisplay.textContent = 'ID de Usuario: No disponible';
-                    }
-                });
-            } catch (error) {
-                console.error("Error al inicializar Firebase o autenticar:", error);
-                userIdDisplay.textContent = 'Error de autenticación';
-            }
-        }
-
-        const exampleLaws = [
-            {
-                title: "Constitución Política de los Estados Unidos Mexicanos",
-                description: "Es la ley suprema de México, la base de su ordenamiento jurídico. Establece los derechos fundamentales de los ciudadanos y la estructura del Estado.",
-                regulations: [
-                    { title: "Artículo 31, fracción IV", content: "Es obligación de los mexicanos contribuir a los gastos públicos, de la Federación, como de los Estados, de la Ciudad de México y del Municipio en que residan, de la manera proporcional y equitativa que dispongan las leyes." }
-                ],
-                related_articles: [
-                    { law: "Código Fiscal de la Federación", article_number: "Artículo 1" },
-                    { law: "Ley del Impuesto Sobre la Renta", article_number: "Artículo 1" }
-                ]
-            },
-            {
-                title: "Código Fiscal de la Federación",
-                description: "Establece las disposiciones para la recaudación de contribuciones, los procedimientos para la determinación de créditos fiscales y las facultades de las autoridades fiscales.",
-                regulations: [
-                    { title: "Artículo 1", content: "Las personas físicas y las morales están obligadas a contribuir para los gastos públicos conforme a las leyes fiscales respectivas. Las disposiciones de este Código se aplicarán en defecto de las leyes fiscales de que se trate." }
-                ],
-                related_articles: [
-                    { law: "Constitución Política de los Estados Unidos Mexicanos", article_number: "Artículo 31, fracción IV" }
-                ]
-            },
-            {
-                title: "Ley del Impuesto Sobre la Renta",
-                description: "Regula el impuesto que se aplica a los ingresos de las personas físicas y morales.",
-                regulations: [
-                    { title: "Artículo 1", content: "Las personas físicas y las morales están obligadas al pago del impuesto sobre la renta en los siguientes casos: I. Las residentes en México, respecto de todos sus ingresos, cualquiera que sea la ubicación de la fuente de riqueza de donde procedan. II. Los residentes en el extranjero que tengan un establecimiento permanente en el país, respecto de los ingresos atribuibles a dicho establecimiento permanente. III. Los residentes en el extranjero, respecto de los ingresos procedentes de fuentes de riqueza situadas en territorio nacional, cuando no tengan un establecimiento permanente en el país, o cuando teniéndolo, dichos ingresos no sean atribuibles a este." }
-                ],
-                related_articles: [
-                    { law: "Constitución Política de los Estados Unidos Mexicanos", article_number: "Artículo 31, fracción IV" }
-                ]
-            },
-            {
-                title: "Ley Federal del Trabajo",
-                description: "Regula las relaciones laborales entre trabajadores y empleadores.",
-                regulations: [
-                    { title: "Jornada laboral", content: "La jornada máxima es de 8 horas diarias." },
-                    { title: "Días de descanso", content: "Por cada 6 días de trabajo, se debe disfrutar de un día de descanso con goce de salario íntegro." }
-                ],
-                related_articles: [
-                    { law: "Constitución Política de los Estados Unidos Mexicanos", article_number: "Artículo 123" }
-                ]
-            },
-            {
-                title: "Código Penal Federal",
-                description: "Establece los delitos y las penas correspondientes a nivel federal.",
-                regulations: [
-                    { title: "Homicidio", content: "Quien priva de la vida a otro será sancionado con prisión de doce a veinte años." },
-                    { title: "Robo", content: "El que se apodera de una cosa ajena mueble sin derecho y sin consentimiento de la persona que puede disponer de ella." }
-                ],
-                related_articles: [
-                    { law: "Ley de Amparo", article_number: "Artículo 1" },
-                    { law: "Constitución Política de los Estados Unidos Mexicanos", article_number: "Artículo 14" }
-                ]
-            },
-            {
-                title: "Ley General de Salud",
-                description: "Define las bases y modalidades para el acceso a los servicios de salud.",
-                regulations: [
-                    { title: "Atención médica", content: "Toda persona tiene derecho a la protección de la salud." },
-                    { title: "Medicamentos", content: "La Secretaría de Salud regulará la producción y distribución de medicamentos." }
-                ],
-                related_articles: [
-                    { law: "Constitución Política de los Estados Unidos Mexicanos", article_number: "Artículo 4" }
-                ]
-            }
-        ];
-
-        async function populateDatabase() {
-            try {
-                const lawsCollection = collection(db, `artifacts/${appId}/public/data/laws`);
-                const querySnapshot = await getDocs(lawsCollection);
-                if (querySnapshot.empty) {
-                    console.log("La base de datos está vacía. Poblando con datos de ejemplo...");
-                    for (const law of exampleLaws) {
-                        await addDoc(lawsCollection, law);
-                    }
-                    console.log("Datos de ejemplo agregados.");
-                } else {
-                    console.log("La base de datos ya contiene datos.");
-                }
-            } catch (error) {
-                console.error("Error al poblar la base de datos:", error);
-            }
-        }
-
-        async function setupDatabaseAndListeners() {
-            const lawsCollection = collection(db, `artifacts/${appId}/public/data/laws`);
-            await populateDatabase();
-            const q = query(lawsCollection);
-            onSnapshot(q, (querySnapshot) => {
-                allLaws = [];
-                querySnapshot.forEach((doc) => {
-                    allLaws.push({ id: doc.id, ...doc.data() });
-                });
-                renderLaws(allLaws);
-            });
-        }
-
-        function renderLaws(laws) {
-            lawList.innerHTML = '';
-            const searchText = searchInput.value.toLowerCase();
-            const filteredLaws = laws.filter(law => law.title.toLowerCase().includes(searchText) || law.description.toLowerCase().includes(searchText));
-
-            if (filteredLaws.length === 0) {
-                lawList.innerHTML = `<p class="text-center text-gray-500">No se encontraron leyes.</p>`;
-                return;
-            }
-            
-            filteredLaws.forEach(law => {
-                const lawItem = document.createElement('div');
-                lawItem.className = "law-item p-4 bg-white rounded-xl shadow-md mb-4 hover:bg-gray-50";
-                lawItem.innerHTML = `<h3 class="text-xl font-semibold text-gray-800">${law.title}</h3><p class="text-gray-600">${law.description}</p>`;
-                lawItem.addEventListener('click', () => showLawDetails(law.id));
-                lawList.appendChild(lawItem);
-            });
-        }
-
-        function showLawDetails(lawId) {
-            lawDetailsContainer.innerHTML = '';
-            lawDetailsContainer.classList.remove('hidden');
-            document.getElementById('main-container').classList.add('hidden');
-
-            const lawRef = doc(db, `artifacts/${appId}/public/data/laws`, lawId);
-            onSnapshot(lawRef, async (docSnap) => {
-                if (docSnap.exists()) {
-                    const law = docSnap.data();
-                    lawDetailsContainer.innerHTML = `
-                        <div class="p-6 bg-white rounded-xl shadow-lg border border-gray-200">
-                            <h2 class="text-3xl font-bold text-center text-blue-700 mb-4">${law.title}</h2>
-                            <p class="text-lg text-gray-700 mb-6">${law.description}</p>
-                            
-                            <div class="flex flex-col sm:flex-row items-center justify-center space-y-2 sm:space-y-0 sm:space-x-4 mb-4">
-                                <button id="explain-button" class="flex-grow w-full sm:w-auto bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-xl transition-colors">
-                                    Explicar esta ley ✨
-                                </button>
-                                <button id="audio-button" class="flex-grow w-full sm:w-auto bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-xl transition-colors">
-                                    <svg class="w-6 h-6 mx-auto" fill="currentColor" viewBox="0 0 24 24"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.81 5 3.54 5 6.71s-2.11 5.9-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
-                                </button>
-                                <button id="edit-law-button" class="flex-grow w-full sm:w-auto bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-2 px-4 rounded-xl transition-colors">
-                                    Editar Ley
-                                </button>
-                                <button id="delete-law-button" class="flex-grow w-full sm:w-auto bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-xl transition-colors">
-                                    Eliminar Ley
-                                </button>
-                            </div>
-
-                            <div id="explanation-section" class="mt-6 hidden">
-                                <h3 class="text-2xl font-semibold text-gray-800 mb-3 border-b-2 pb-2 border-gray-300">Explicación Simplificada</h3>
-                                <div id="explanation-content" class="text-gray-700"></div>
-                            </div>
-                            
-                            <h3 class="text-2xl font-semibold text-blue-600 mb-3 mt-8 border-b-2 pb-2 border-blue-200">Reglamentos</h3>
-                            ${law.regulations.map(reg => `
-                                <div class="mb-4 p-4 bg-blue-50 rounded-lg">
-                                    <h4 class="text-lg font-medium text-blue-800">${reg.title}</h4>
-                                    <p class="text-gray-600">${reg.content}</p>
-                                </div>
-                            `).join('')}
-
-                            <h3 class="text-2xl font-semibold text-blue-600 mb-3 mt-8 border-b-2 pb-2 border-blue-200">Artículos Relacionados</h3>
-                            ${law.related_articles.map(art => `
-                                <div class="mb-4 p-4 bg-blue-50 rounded-lg">
-                                    <span class="font-medium text-blue-800">${art.law}</span> - Artículo: <span class="related-article-link" data-law-title="${art.law}">${art.article_number}</span>
-                                </div>
-                            `).join('')}
-                        </div>
-                    `;
-
-                    document.getElementById('explain-button').addEventListener('click', () => explainLawWithGemini(law));
-                    document.getElementById('audio-button').addEventListener('click', () => playExplanationAudio());
-                    document.getElementById('edit-law-button').addEventListener('click', () => editLaw(law, docSnap.id));
-                    document.getElementById('delete-law-button').addEventListener('click', () => showDeleteConfirmation(docSnap.id));
-                    
-                    document.querySelectorAll('.related-article-link').forEach(link => {
-                        link.addEventListener('click', (e) => {
-                            const relatedLawTitle = e.target.getAttribute('data-law-title');
-                            navigateToLaw(relatedLawTitle);
-                        });
-                    });
-
-                } else {
-                    lawDetailsContainer.innerHTML = `<p class="text-center text-red-500">Ley no encontrada.</p>`;
-                }
-            });
-        }
-
-        function editLaw(law, id) {
-            editingLawId = id;
-            modalTitle.textContent = "Editar Ley";
-            formSubmit.textContent = "Actualizar Ley";
-            formTitle.value = law.title;
-            formDescription.value = law.description;
-            if (law.regulations && law.regulations.length > 0) {
-                formRegTitle.value = law.regulations[0].title;
-                formRegContent.value = law.regulations[0].content;
-            }
-            if (law.related_articles && law.related_articles.length > 0) {
-                formRelLaw.value = law.related_articles[0].law;
-                formRelArticle.value = law.related_articles[0].article_number;
-            }
-            modal.classList.remove('hidden');
-        }
-
-        function showDeleteConfirmation(lawId) {
-            confirmationModal.classList.remove('hidden');
-            confirmDeleteButton.onclick = () => deleteLaw(lawId);
-            cancelDeleteButton.onclick = () => confirmationModal.classList.add('hidden');
-        }
-
-        async function deleteLaw(lawId) {
-            try {
-                await deleteDoc(doc(db, `artifacts/${appId}/public/data/laws`, lawId));
-                confirmationModal.classList.add('hidden');
-                lawDetailsContainer.classList.add('hidden');
-                document.getElementById('main-container').classList.remove('hidden');
-            } catch (error) {
-                console.error("Error al eliminar el documento:", error);
-            }
-        }
-
-        async function navigateToLaw(lawTitle) {
-            try {
-                const q = query(collection(db, `artifacts/${appId}/public/data/laws`), where("title", "==", lawTitle));
-                const querySnapshot = await getDocs(q);
-                if (!querySnapshot.empty) {
-                    const lawDoc = querySnapshot.docs[0];
-                    showLawDetails(lawDoc.id);
-                } else {
-                    lawDetailsContainer.innerHTML = `<p class="text-center text-red-500">La ley relacionada no se encontró en la base de datos.</p>`;
-                }
-            } catch (error) {
-                console.error("Error al buscar la ley relacionada:", error);
-                lawDetailsContainer.innerHTML = `<p class="text-center text-red-500">Error al buscar la ley relacionada.</p>`;
-            }
-        }
-        
-        async function explainLawWithGemini(law) {
-            const explainButton = document.getElementById('explain-button');
-            const explanationSection = document.getElementById('explanation-section');
-            const explanationContent = document.getElementById('explanation-content');
-            
-            explanationSection.classList.remove('hidden');
-            explanationContent.innerHTML = `<p class="text-center text-gray-500">Generando explicación...</p>`;
-            explainButton.disabled = true;
-
-            const userPrompt = `Explícame la siguiente ley mexicana en términos sencillos, como si estuviera hablando con un estudiante de secundaria, sin jerga legal y usando analogías claras. Ley: ${law.title}, Descripción: ${law.description}`;
-            
-            const payload = {
-                contents: [{ parts: [{ text: userPrompt }] }],
-                tools: [{ "google_search": {} }],
-                systemInstruction: {
-                    parts: [{ text: "Actúa como un asesor legal amigable y paciente, capaz de traducir conceptos jurídicos complejos a un lenguaje coloquial y accesible para el público general." }]
-                }
-            };
-            
-            try {
-                const response = await fetch(geminiApiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                
-                if (!response.ok) {
-                    throw new Error(`Error HTTP: ${response.status}`);
-                }
-                
-                const result = await response.json();
-                const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-                
-                if (text) {
-                    explanationContent.innerHTML = `<p>${text}</p>`;
-                } else {
-                    explanationContent.innerHTML = `<p class="text-center text-red-500">No se pudo generar una explicación. Por favor, inténtalo de nuevo.</p>`;
-                }
-
-            } catch (error) {
-                console.error("Error al llamar a la API de Gemini:", error);
-                explanationContent.innerHTML = `<p class="text-center text-red-500">Error: No se pudo conectar con el servicio. Por favor, verifica tu conexión.</p>`;
-            } finally {
-                explainButton.disabled = false;
-            }
-        }
-
-        async function playExplanationAudio() {
-            const audioButton = document.getElementById('audio-button');
-            const explanationContent = document.getElementById('explanation-content');
-            const textToSpeak = explanationContent.innerText;
-            const originalButtonContent = audioButton.innerHTML;
-
-            if (!textToSpeak || textToSpeak.includes("Generando") || textToSpeak.includes("No se pudo")) {
-                return;
-            }
-
-            audioButton.innerHTML = `<div class="loading-spinner"></div>`;
-            audioButton.disabled = true;
-
-            const payload = {
-                contents: [{
-                    parts: [{ text: textToSpeak }]
-                }],
-                generationConfig: {
-                    responseModalities: ["AUDIO"],
-                    speechConfig: {
-                        voiceConfig: {
-                            prebuiltVoiceConfig: { voiceName: "Fenrir" }
-                        }
-                    }
-                },
-                model: "gemini-2.5-flash-preview-tts"
-            };
-
-            try {
-                const response = await fetch(geminiTtsApiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const result = await response.json();
-                const part = result?.candidates?.[0]?.content?.parts?.[0];
-                const audioData = part?.inlineData?.data;
-                const mimeType = part?.inlineData?.mimeType;
-
-                if (audioData && mimeType && mimeType.startsWith("audio/")) {
-                    const sampleRate = parseInt(mimeType.match(/rate=(\d+)/)[1], 10);
-                    const pcmData = base64ToArrayBuffer(audioData);
-                    const pcm16 = new Int16Array(pcmData);
-                    const wavBlob = pcmToWav(pcm16, sampleRate);
-                    const audioUrl = URL.createObjectURL(wavBlob);
-                    const audio = new Audio(audioUrl);
-                    audio.play();
-                } else {
-                    console.error("Error: No se recibió audio válido.");
-                }
-            } catch (error) {
-                console.error("Error al generar o reproducir el audio:", error);
-            } finally {
-                audioButton.innerHTML = originalButtonContent;
-                audioButton.disabled = false;
-            }
-        }
-        
-        function base64ToArrayBuffer(base64) {
-            const binaryString = window.atob(base64);
-            const len = binaryString.length;
-            const bytes = new Uint8Array(len);
-            for (let i = 0; i < len; i++) {
-                bytes[i] = binaryString.charCodeAt(i);
-            }
-            return bytes.buffer;
-        }
-
-        async function saveLaw(event) {
-            event.preventDefault();
-            const lawData = {
-                title: formTitle.value.trim(),
-                description: formDescription.value.trim(),
-                regulations: [{
-                    title: formRegTitle.value.trim(),
-                    content: formRegContent.value.trim()
-                }],
-                related_articles: [{
-                    law: formRelLaw.value.trim(),
-                    article_number: formRelArticle.value.trim()
-                }]
-            };
-
-            if (lawData.title && lawData.description) {
-                try {
-                    const lawsCollection = collection(db, `artifacts/${appId}/public/data/laws`);
-                    if (editingLawId) {
-                        // Modo de edición: actualizar el documento existente
-                        await updateDoc(doc(lawsCollection, editingLawId), lawData);
-                        console.log("Documento actualizado con ID:", editingLawId);
-                    } else {
-                        // Modo de adición: agregar un nuevo documento
-                        await addDoc(lawsCollection, lawData);
-                        console.log("Documento agregado con éxito.");
-                    }
-                    resetForm();
-                    modal.classList.add('hidden');
-                } catch (e) {
-                    console.error("Error al guardar el documento: ", e);
-                }
-            } else {
-                const errorMessage = document.createElement('div');
-                errorMessage.className = "fixed inset-0 bg-red-600 bg-opacity-50 flex items-center justify-center";
-                errorMessage.innerHTML = `<div class="bg-white rounded-xl p-6 shadow-lg text-center"><p class="text-red-700 font-bold mb-4">Error: Por favor, rellena al menos el título y la descripción.</p><button class="bg-red-500 text-white py-2 px-4 rounded-xl" onclick="this.parentElement.parentElement.remove()">Cerrar</button></div>`;
-                document.body.appendChild(errorMessage);
-            }
-        }
-
-        function resetForm() {
-            formTitle.value = '';
-            formArticleNumber.value = '';
-            formDescription.value = '';
-            formRegTitle.value = '';
-            formRegContent.value = '';
-            formRelLaw.value = '';
-            formRelArticle.value = '';
-            suggestedRelatedLaws.innerHTML = '';
-            editingLawId = null;
-            modalTitle.textContent = "Agregar Nueva Ley";
-            formSubmit.textContent = "Guardar Ley";
-        }
-        
-        async function fetchLawFromGemini() {
-            const lawTitle = formTitle.value.trim();
-            const articleNumber = formArticleNumber.value.trim();
-            const fetchButton = document.getElementById('fetch-law-from-gemini-button');
-            const originalButtonContent = fetchButton.innerHTML;
-
-            if (!lawTitle || !articleNumber) {
-                const errorMessage = document.createElement('div');
-                errorMessage.className = "fixed inset-0 bg-red-600 bg-opacity-50 flex items-center justify-center";
-                errorMessage.innerHTML = `<div class="bg-white rounded-xl p-6 shadow-lg text-center"><p class="text-red-700 font-bold mb-4">Error: Por favor, rellena el título y el número de artículo.</p><button class="bg-red-500 text-white py-2 px-4 rounded-xl" onclick="this.parentElement.parentElement.remove()">Cerrar</button></div>`;
-                document.body.appendChild(errorMessage);
-                return;
-            }
-
-            fetchButton.disabled = true;
-            fetchButton.innerHTML = `<div class="loading-spinner"></div>`;
-            
-            const userPrompt = `Busca información del Artículo ${articleNumber} de la ley ${lawTitle} de una fuente confiable como Wikipedia. Proporciona una descripción, el contenido exacto del artículo y las leyes o artículos relacionados en el siguiente formato JSON.`;
-            
-            const payload = {
-                contents: [{ parts: [{ text: userPrompt }] }],
-                tools: [{ "google_search": {} }],
-                systemInstruction: {
-                    parts: [{ text: "Actúa como un experto en leyes mexicanas y un analista de datos. Tu tarea es encontrar y estructurar información sobre una ley o un artículo específico de Wikipedia u otras fuentes fiables. La información debe incluir el título de la ley, una descripción concisa, el título y el contenido del reglamento o artículo, y una lista de leyes relacionadas. Formatea tu respuesta estrictamente como un objeto JSON con las siguientes propiedades: \"title\" (string), \"description\" (string), \"regulations\" (array of objects with \"title\" and \"content\" strings), y \"related_articles\" (array of objects with \"law\" and \"article_number\" strings). No incluyas ningún texto adicional antes o después del objeto JSON." }]
-                },
-                generationConfig: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        "type": "OBJECT",
-                        "properties": {
-                            "title": { "type": "STRING" },
-                            "description": { "type": "STRING" },
-                            "regulations": {
-                                "type": "ARRAY",
-                                "items": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "title": { "type": "STRING" },
-                                        "content": { "type": "STRING" }
-                                    },
-                                    "propertyOrdering": ["title", "content"]
-                                }
-                            },
-                            "related_articles": {
-                                "type": "ARRAY",
-                                "items": {
-                                    "type": "OBJECT",
-                                    "properties": {
-                                        "law": { "type": "STRING" },
-                                        "article_number": { "type": "STRING" }
-                                    },
-                                    "propertyOrdering": ["law", "article_number"]
-                                }
-                            }
-                        },
-                        "propertyOrdering": ["title", "description", "regulations", "related_articles"]
-                    }
-                }
-            };
-
-            try {
-                const response = await fetch(geminiApiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const result = await response.json();
-                const jsonText = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-                
-                if (jsonText) {
-                    const lawData = JSON.parse(jsonText);
-                    formTitle.value = lawData.title || '';
-                    formDescription.value = lawData.description || '';
-                    if (lawData.regulations && lawData.regulations.length > 0) {
-                        formRegTitle.value = lawData.regulations[0].title || '';
-                        formRegContent.value = lawData.regulations[0].content || '';
-                    }
-                    if (lawData.related_articles && lawData.related_articles.length > 0) {
-                        formRelLaw.value = lawData.related_articles[0].law || '';
-                        formRelArticle.value = lawData.related_articles[0].article_number || '';
-                    }
-                    suggestedRelatedLaws.innerHTML = '<p class="text-green-600 font-bold">Información encontrada y precargada. ¡Revisa los campos!</p>';
-                } else {
-                    suggestedRelatedLaws.innerHTML = `<p class="text-red-500">Error: No se pudo obtener la información de la ley. Inténtalo de nuevo.</p>`;
-                }
-            } catch (error) {
-                console.error("Error al llamar a la API de Gemini:", error);
-                suggestedRelatedLaws.innerHTML = `<p class="text-red-500">Error: No se pudo conectar con el servicio.</p>`;
-            } finally {
-                fetchButton.disabled = false;
-                fetchButton.innerHTML = originalButtonContent;
-            }
-        }
-
-
-        async function generateRelatedLaws() {
-            const lawTitle = formTitle.value.trim();
-            const lawDescription = formDescription.value.trim();
-            const generateButton = document.getElementById('generate-related-laws-button');
-            const originalButtonText = generateButton.innerHTML;
-
-            if (!lawTitle || !lawDescription) {
-                suggestedRelatedLaws.innerHTML = `<p class="text-red-500">Por favor, ingresa el título y la descripción para generar sugerencias.</p>`;
-                return;
-            }
-            
-            generateButton.disabled = true;
-            generateButton.innerHTML = `<div class="loading-spinner"></div>`;
-
-            const existingLawTitles = allLaws.map(law => law.title).join(", ");
-            const userPrompt = `Dada la siguiente ley, sugiera hasta 3 leyes relacionadas de la lista proporcionada. Solo devuelva los nombres de las leyes relacionadas en un formato de arreglo JSON, por ejemplo: ["Ley 1", "Ley 2"]. No incluya explicaciones ni texto adicional. Ley: ${lawTitle}, Descripción: ${lawDescription}, Lista de leyes existentes: ${existingLawTitles}`;
-            
-            const payload = {
-                contents: [{ parts: [{ text: userPrompt }] }],
-                tools: [{ "google_search": {} }],
-                systemInstruction: {
-                    parts: [{ text: "Actúa como un analista legal experto, capaz de identificar relaciones entre diferentes leyes y reglamentos de manera precisa y concisa. Responde únicamente con el array JSON." }]
-                }
-            };
-
-            try {
-                const response = await fetch(geminiApiUrl, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-                const result = await response.json();
-                const text = result?.candidates?.[0]?.content?.parts?.[0]?.text;
-                
-                if (text) {
-                    const relatedLaws = JSON.parse(text);
-                    if (relatedLaws.length > 0) {
-                        suggestedRelatedLaws.innerHTML = `<p class="font-bold mb-2">Sugerencias de la IA:</p>`;
-                        relatedLaws.forEach(law => {
-                            const lawItem = document.createElement('div');
-                            lawItem.className = "flex items-center space-x-2";
-                            lawItem.innerHTML = `<input type="checkbox" class="form-checkbox" data-law-title="${law}"><label class="text-gray-700">${law}</label>`;
-                            suggestedRelatedLaws.appendChild(lawItem);
-                        });
-                    } else {
-                        suggestedRelatedLaws.innerHTML = `<p>La IA no encontró leyes relacionadas.</p>`;
-                    }
-                } else {
-                    suggestedRelatedLaws.innerHTML = `<p class="text-red-500">Error al obtener sugerencias.</p>`;
-                }
-            } catch (error) {
-                console.error("Error al llamar a la API de Gemini:", error);
-                suggestedRelatedLaws.innerHTML = `<p class="text-red-500">Error: No se pudo conectar con el servicio.</p>`;
-            } finally {
-                generateButton.disabled = false;
-                generateButton.innerHTML = originalButtonText;
-            }
-        }
-        
-        // Maneja el botón de regreso
-        backButton.addEventListener('click', () => {
-            lawDetailsContainer.classList.add('hidden');
-            document.getElementById('main-container').classList.remove('hidden');
-        });
-
-        // Maneja la entrada de búsqueda
-        searchInput.addEventListener('input', () => {
-            renderLaws(allLaws);
-        });
-
-        // Maneja la apertura y cierre del formulario
-        addLawButton.addEventListener('click', () => {
-            resetForm();
-            modal.classList.remove('hidden');
-        });
-
-        closeFormButton.addEventListener('click', () => {
-            modal.classList.add('hidden');
-        });
-
-        // Eventos del formulario
-        addLawForm.addEventListener('submit', saveLaw);
-        generateRelatedLawsButton.addEventListener('click', generateRelatedLaws);
-        fetchLawFromGeminiButton.addEventListener('click', fetchLawFromGemini);
-
-        // Inicia la aplicación cuando la ventana se carga
-        window.onload = initializeFirebase;
-    </script>
 </head>
-<body class="bg-gray-100 p-4 sm:p-8">
-    <div id="main-container" class="container">
-        <header class="text-center py-8">
-            <h1 class="text-4xl sm:text-5xl font-extrabold text-gray-900 leading-tight mb-2">Compendio de Leyes 2025</h1>
-            <p class="text-lg text-gray-600">Buscador</p>
-        </header>
+<body class="bg-gray-100 text-gray-800">
 
-        <main class="mt-8">
-            <div class="flex items-center justify-between mb-6">
-                <input
-                    type="text"
-                    id="search-input"
-                    class="flex-grow p-3 rounded-xl border border-gray-300 focus:outline-none focus:ring-2 focus:ring-blue-500 shadow-sm"
-                    placeholder="Buscar ley por nombre..."
-                >
-                <button id="add-law-button" class="ml-4 p-3 bg-green-500 text-white rounded-xl shadow-md hover:bg-green-600 transition-colors">
-                    + Agregar Ley
-                </button>
-            </div>
-            <div class="flex items-center justify-between mb-4 text-sm text-gray-500">
-                <p id="user-id-display" class="truncate"></p>
-            </div>
-            <div id="law-list" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <!-- Las leyes se renderizarán aquí -->
-            </div>
-        </main>
-    </div>
+    <!-- Header -->
+    <header class="bg-white shadow-sm sticky top-0 z-50">
+        <div class="container mx-auto p-4 flex justify-between items-center">
+            <h1 class="text-3xl font-bold text-indigo-600">
+                <a href="#" class="flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8 text-indigo-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l-9 4.5v12l9 4.5 9-4.5v-12z"></path><polyline points="3 6 12 10.5 21 6"></polyline><path d="M12 10.5v10.5"></path><path d="M3 15.5l9 4.5"></path><path d="M21 15.5l-9 4.5"></path></svg>
+                    <span>Lex México</span>
+                </a>
+            </h1>
+            <nav class="hidden md:flex space-x-4">
+                <a href="#" class="text-gray-600 hover:text-indigo-600 font-medium transition-colors">Inicio</a>
+                <a href="#" class="text-gray-600 hover:text-indigo-600 font-medium transition-colors">Leyes Destacadas</a>
+                <a href="#" class="text-gray-600 hover:text-indigo-600 font-medium transition-colors">Categorías</a>
+            </nav>
+        </div>
+    </header>
 
-    <div id="law-details-container" class="container hidden">
-        <button id="back-button" class="flex items-center mb-6 text-blue-600 hover:text-blue-800 transition-colors">
-            <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
-            Volver a la lista
-        </button>
-        <!-- Los detalles de la ley se renderizarán aquí -->
-    </div>
+    <!-- Main Content -->
+    <main class="container mx-auto p-4 md:p-8 grid grid-cols-1 lg:grid-cols-4 gap-8">
 
-    <!-- Modal para agregar/editar leyes -->
-    <div id="modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center hidden">
-        <div class="bg-white rounded-xl p-8 max-w-lg w-full shadow-lg relative">
-            <button id="close-form" class="absolute top-4 right-4 text-gray-500 hover:text-gray-800 transition-colors">
-                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
-            </button>
-            <h2 id="modal-title" class="text-2xl font-bold mb-6 text-center">Agregar Nueva Ley</h2>
-            <form id="add-law-form" class="space-y-4">
-                <div>
-                    <label for="form-title" class="block text-sm font-medium text-gray-700">Título de la Ley</label>
-                    <input type="text" id="form-title" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500">
+        <!-- Sidebar for categories and featured laws -->
+        <aside class="lg:col-span-1 bg-white rounded-lg shadow-md p-6">
+            <h2 class="text-2xl font-semibold text-gray-800 mb-4">Categorías</h2>
+            <ul class="space-y-2 text-sm">
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Amparo</a></li>
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Civil</a></li>
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Fiscal</a></li>
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Laboral</a></li>
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Mercantil</a></li>
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Penal</a></li>
+            </ul>
+
+            <h2 class="text-2xl font-semibold text-gray-800 mt-6 mb-4">Leyes Destacadas</h2>
+            <ul class="space-y-2 text-sm">
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Constitución Política</a></li>
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Código Fiscal</a></li>
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Ley del ISR</a></li>
+                <li><a href="#" class="text-gray-600 hover:text-indigo-600 transition-colors">Ley del IVA</a></li>
+            </ul>
+        </aside>
+
+        <!-- Main content area for search and law display -->
+        <section class="lg:col-span-3 bg-white rounded-lg shadow-md p-6">
+
+            <!-- Search Bar -->
+            <div class="mb-6">
+                <div class="relative">
+                    <input type="text" id="searchInput" placeholder="Buscar leyes, artículos o palabras clave..." class="w-full pl-10 pr-4 py-2 rounded-full border border-gray-300 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
                 </div>
-                <div>
-                    <label for="form-article-number" class="block text-sm font-medium text-gray-700">Número de Artículo</label>
-                    <div class="flex space-x-2">
-                        <input type="text" id="form-article-number" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500">
-                        <button type="button" id="fetch-law-from-gemini-button" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded-xl transition-colors whitespace-nowrap">
-                            Buscar con IA ✨
-                        </button>
+            </div>
+
+            <!-- Law List/Results -->
+            <div id="lawList" class="space-y-4">
+                <!-- Law cards will be populated here by JavaScript -->
+            </div>
+
+            <!-- Law Detail and Correlation View -->
+            <div id="lawDetail" class="hidden">
+                <button id="backButton" class="text-indigo-600 hover:text-indigo-800 transition-colors mb-4 flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+                    </svg>
+                    <span>Volver a la lista</span>
+                </button>
+                <div class="bg-gray-50 rounded-lg p-6 flex flex-col md:flex-row gap-6">
+                    <!-- Law Content -->
+                    <div class="law-content-container flex-1 bg-white p-6 rounded-lg shadow-inner">
+                        <h2 id="lawTitle" class="text-3xl font-bold mb-4"></h2>
+                        <div id="lawContent" class="prose max-w-none text-gray-700"></div>
+                    </div>
+
+                    <!-- Correlated Laws Sidebar -->
+                    <div class="w-full md:w-1/3 bg-gray-100 rounded-lg p-4 shadow-inner">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4">Leyes Correlacionadas</h3>
+                        <div id="correlatedLaws" class="space-y-3 text-sm">
+                            <!-- Correlated laws will be populated here -->
+                            <div class="p-3 bg-white rounded-lg shadow-sm border border-gray-200">
+                                <a href="#" class="text-blue-600 hover:underline font-medium">Ley del Impuesto al Valor Agregado</a>
+                                <p class="text-gray-500 text-xs mt-1">Artículos relacionados: 14, 15, 16</p>
+                            </div>
+                            <div class="p-3 bg-white rounded-lg shadow-sm border border-gray-200">
+                                <a href="#" class="text-blue-600 hover:underline font-medium">Código Fiscal de la Federación</a>
+                                <p class="text-gray-500 text-xs mt-1">Artículos relacionados: 23, 29, 31</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
-                <div>
-                    <label for="form-description" class="block text-sm font-medium text-gray-700">Descripción</label>
-                    <textarea id="form-description" rows="3" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm focus:ring-blue-500 focus:border-blue-500"></textarea>
-                </div>
-                <div>
-                    <h3 class="font-bold mt-4 mb-2">Reglamento (Opcional)</h3>
-                    <label for="form-reg-title" class="block text-sm font-medium text-gray-700">Título del Reglamento</label>
-                    <input type="text" id="form-reg-title" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
-                    <label for="form-reg-content" class="block text-sm font-medium text-gray-700 mt-2">Contenido del Reglamento</label>
-                    <textarea id="form-reg-content" rows="2" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm"></textarea>
-                </div>
-                <div>
-                    <h3 class="font-bold mt-4 mb-2">Artículos Relacionados (Manual)</h3>
-                    <label for="form-rel-law" class="block text-sm font-medium text-gray-700">Título de la Ley Relacionada</label>
-                    <input type="text" id="form-rel-law" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
-                    <label for="form-rel-article" class="block text-sm font-medium text-gray-700 mt-2">Número del Artículo</label>
-                    <input type="text" id="form-rel-article" class="mt-1 block w-full p-2 border border-gray-300 rounded-md shadow-sm">
-                </div>
-                <div class="flex justify-end pt-4">
-                    <button type="submit" id="form-submit" class="bg-blue-600 text-white font-bold py-2 px-6 rounded-xl shadow-md hover:bg-blue-700 transition-colors">
-                        Guardar Ley
-                    </button>
-                </div>
-            </form>
-        </div>
-    </div>
-
-    <!-- Modal de confirmación para eliminar -->
-    <div id="confirmation-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center hidden">
-        <div class="bg-white rounded-xl p-8 max-w-sm w-full shadow-lg relative text-center">
-            <h3 class="text-xl font-bold mb-4">Confirmar Eliminación</h3>
-            <p class="mb-6 text-gray-700">¿Estás seguro de que quieres eliminar esta ley? Esta acción no se puede deshacer.</p>
-            <div class="flex justify-center space-x-4">
-                <button id="confirm-delete" class="bg-red-500 text-white font-bold py-2 px-4 rounded-xl hover:bg-red-600 transition-colors">
-                    Sí, eliminar
-                </button>
-                <button id="cancel-delete" class="bg-gray-300 text-gray-800 font-bold py-2 px-4 rounded-xl hover:bg-gray-400 transition-colors">
-                    Cancelar
-                </button>
             </div>
+        </section>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-white py-6 mt-8">
+        <div class="container mx-auto text-center text-sm">
+            <p>&copy; 2025 Lex México. Todos los derechos reservados. Creado para fines de demostración.</p>
         </div>
-    </div>
+    </footer>
+
+    <script>
+        const laws = [
+            { id: 'l1', title: 'Constitución Política de los Estados Unidos Mexicanos', content: '<p><b>Artículo 1.</b> En los Estados Unidos Mexicanos todas las personas gozarán de los derechos humanos reconocidos en esta Constitución y en los tratados internacionales de los que el Estado Mexicano sea parte, así como de las garantías para su protección...</p><p><b>Artículo 2.</b> La Nación Mexicana es única e indivisible...</p><p><b>Artículo 3.</b> Toda persona tiene derecho a la educación. El Estado –Federación, Estados, Ciudad de México y Municipios– impartirá y garantizará la educación inicial, preescolar, primaria, secundaria, media superior y superior...</p><p><b>Artículo 4.</b> La mujer y el hombre son iguales ante la ley. Esta protegerá la organización y el desarrollo de la familia...</p>', correlated: ['l2'] },
+            { id: 'l2', title: 'Ley Federal del Trabajo', content: '<p><b>Artículo 1.</b> La presente Ley es de observancia general en toda la República y rige las relaciones de trabajo...</p><p><b>Artículo 2.</b> Las normas del trabajo tienden a conseguir el equilibrio y la justicia social en las relaciones entre trabajadores y patrones...</p><p><b>Artículo 3.</b> El trabajo es un derecho y un deber social. No es artículo de comercio...</p><p><b>Artículo 4.</b> No se podrá impedir el ejercicio del derecho de trabajo, ni del derecho a dedicarse a la profesión, industria o comercio que le acomode...</p>', correlated: ['l1'] },
+            { id: 'l3', title: 'Código Civil Federal', content: '<p><b>Artículo 1.</b> Las disposiciones de este Código regirán en toda la República en lo que sea de la competencia federal...</p><p><b>Artículo 2.</b> La capacidad jurídica de las personas físicas se adquiere por el nacimiento y se extingue por la muerte...</p>', correlated: [] },
+            { id: 'l4', title: 'Ley del Impuesto sobre la Renta', content: '<p><b>Artículo 1.</b> Las personas físicas y las morales están obligadas a contribuir para los gastos públicos conforme a las leyes fiscales respectivas...</p><p><b>Artículo 2.</b> Se considera que una persona física o moral es residente en el país, para efectos fiscales, cuando haya establecido su residencia en México...</p>', correlated: ['l5'] },
+            { id: 'l5', title: 'Código Fiscal de la Federación', content: '<p><b>Artículo 1.</b> Las disposiciones de este Código se aplicarán en todo el territorio nacional y se regirán por el principio de legalidad...</p><p><b>Artículo 2.</b> Son contribuciones los impuestos, aportaciones de seguridad social, contribuciones de mejoras y derechos...</p>', correlated: ['l4'] }
+        ];
+
+        const lawListDiv = document.getElementById('lawList');
+        const lawDetailDiv = document.getElementById('lawDetail');
+        const lawTitleEl = document.getElementById('lawTitle');
+        const lawContentEl = document.getElementById('lawContent');
+        const correlatedLawsEl = document.getElementById('correlatedLaws');
+        const searchInput = document.getElementById('searchInput');
+        const backButton = document.getElementById('backButton');
+
+        function renderLawList(filteredLaws) {
+            lawListDiv.innerHTML = '';
+            if (filteredLaws.length === 0) {
+                lawListDiv.innerHTML = '<p class="text-gray-500 text-center">No se encontraron resultados.</p>';
+                return;
+            }
+            filteredLaws.forEach(law => {
+                const lawCard = document.createElement('div');
+                lawCard.className = 'law-link p-6 bg-gray-50 rounded-lg shadow-sm border border-gray-200 cursor-pointer hover:bg-white';
+                lawCard.innerHTML = `<h3 class="text-lg font-semibold text-indigo-600">${law.title}</h3>`;
+                lawCard.addEventListener('click', () => showLawDetail(law));
+                lawListDiv.appendChild(lawCard);
+            });
+        }
+
+        function showLawDetail(law) {
+            lawListDiv.classList.add('hidden');
+            lawDetailDiv.classList.remove('hidden');
+
+            lawTitleEl.textContent = law.title;
+            lawContentEl.innerHTML = law.content;
+            
+            correlatedLawsEl.innerHTML = '';
+            if (law.correlated && law.correlated.length > 0) {
+                law.correlated.forEach(correlatedId => {
+                    const correlatedLaw = laws.find(l => l.id === correlatedId);
+                    if (correlatedLaw) {
+                        const correlatedCard = document.createElement('div');
+                        correlatedCard.className = 'p-3 bg-white rounded-lg shadow-sm border border-gray-200 cursor-pointer hover:bg-gray-100';
+                        correlatedCard.innerHTML = `<a href="#" class="text-blue-600 hover:underline font-medium">${correlatedLaw.title}</a>`;
+                        correlatedCard.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            showLawDetail(correlatedLaw);
+                        });
+                        correlatedLawsEl.appendChild(correlatedCard);
+                    }
+                });
+            } else {
+                correlatedLawsEl.innerHTML = '<p class="text-gray-500 text-sm">No hay leyes correlacionadas para este documento.</p>';
+            }
+        }
+
+        function filterLaws(query) {
+            const lowerCaseQuery = query.toLowerCase();
+            return laws.filter(law => 
+                law.title.toLowerCase().includes(lowerCaseQuery) ||
+                law.content.toLowerCase().includes(lowerCaseQuery)
+            );
+        }
+
+        searchInput.addEventListener('keyup', (event) => {
+            const filteredLaws = filterLaws(event.target.value);
+            renderLawList(filteredLaws);
+            if (lawDetailDiv.classList.contains('hidden') === false) {
+                lawDetailDiv.classList.add('hidden');
+                lawListDiv.classList.remove('hidden');
+            }
+        });
+
+        backButton.addEventListener('click', () => {
+            lawDetailDiv.classList.add('hidden');
+            lawListDiv.classList.remove('hidden');
+            searchInput.value = '';
+            renderLawList(laws);
+        });
+
+        // Initial render of all laws
+        renderLawList(laws);
+    </script>
+
 </body>
 </html>
+
+
